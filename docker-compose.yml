@@ -1,0 +1,116 @@
+# Sujet 06 - Streaming musical : Cassandra (3 nœuds, RF = 3) + Spark (1 master, 2 workers) + application Python
+# Démarrage : docker compose up -d --build   (3 à 5 min : les nœuds Cassandra démarrent l'un après l'autre)
+name: streaming-cassandra
+
+x-cassandra: &cassandra
+  image: cassandra:5.0.9
+  environment:
+    CASSANDRA_CLUSTER_NAME: streaming
+    CASSANDRA_SEEDS: cassandra1
+    CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch   # lit CASSANDRA_DC / CASSANDRA_RACK
+    CASSANDRA_DC: dc1
+    CASSANDRA_RACK: rack1
+    MAX_HEAP_SIZE: 512M        # 512M si Docker dispose de moins de 8 Go
+    HEAP_NEWSIZE: 128M
+  healthcheck:                 # « sain » = le nœud accepte les requêtes CQL
+    test: ["CMD-SHELL", "cqlsh -e 'DESCRIBE KEYSPACES' > /dev/null 2>&1"]
+    interval: 15s
+    timeout: 10s
+    retries: 30
+    start_period: 60s
+  restart: unless-stopped      # un « docker compose stop » manuel reste respecté
+
+x-spark: &spark
+  build: ./spark
+  image: streaming-spark:3.5.9
+  user: root                   # pour écrire dans ./results, monté depuis l'hôte
+  environment:
+    CASSANDRA_HOSTS: cassandra1,cassandra2,cassandra3
+    CASSANDRA_DC: dc1
+    RESULTS_DIR: /opt/app/results
+  volumes:
+    - ./spark:/opt/app/spark
+    - ./results:/opt/app/results
+
+services:
+  cassandra1:
+    <<: *cassandra
+    container_name: cassandra1
+    hostname: cassandra1
+    ports: ["9042:9042"]
+    volumes: [cassandra1-data:/var/lib/cassandra]
+
+  cassandra2:                  # démarre quand cassandra1 est sain : deux amorçages simultanés sont refusés
+    <<: *cassandra
+    container_name: cassandra2
+    hostname: cassandra2
+    volumes: [cassandra2-data:/var/lib/cassandra]
+    depends_on:
+      cassandra1: {condition: service_healthy}
+
+  cassandra3:
+    <<: *cassandra
+    container_name: cassandra3
+    hostname: cassandra3
+    volumes: [cassandra3-data:/var/lib/cassandra]
+    depends_on:
+      cassandra2: {condition: service_healthy}
+
+  cassandra-init:              # applique le schéma une fois les 3 nœuds prêts (idempotent : IF NOT EXISTS)
+    image: cassandra:5.0.9
+    container_name: cassandra-init
+    depends_on:
+      cassandra3: {condition: service_healthy}
+    volumes: ["./cassandra/schema.cql:/schema.cql:ro"]
+    command: ["bash", "-c", "cqlsh cassandra1 -f /schema.cql && echo 'Schema applique'"]
+    restart: "no"
+
+  spark-master:
+    <<: *spark
+    container_name: spark-master
+    hostname: spark-master
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.master.Master",
+              "--host", "spark-master", "--port", "7077", "--webui-port", "8080"]
+    ports: ["8080:8080", "4040:4040"]
+
+  spark-worker-1:
+    <<: *spark
+    container_name: spark-worker-1
+    hostname: spark-worker-1
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "--cores", "2",
+              "--memory", "2g", "--work-dir", "/tmp/spark-work", "--webui-port", "8081",
+              "spark://spark-master:7077"]
+    ports: ["8081:8081"]
+    depends_on: [spark-master]
+
+  spark-worker-2:
+    <<: *spark
+    container_name: spark-worker-2
+    hostname: spark-worker-2
+    command: ["/opt/spark/bin/spark-class", "org.apache.spark.deploy.worker.Worker", "--cores", "2",
+              "--memory", "2g", "--work-dir", "/tmp/spark-work", "--webui-port", "8081",
+              "spark://spark-master:7077"]
+    ports: ["8082:8081"]
+    depends_on: [spark-master]
+
+  app:                         # Python : générateur, chargeur, benchmarks, tableau de bord Streamlit
+    build: ./app
+    image: streaming-app:1.0
+    container_name: app
+    depends_on:
+      cassandra-init: {condition: service_completed_successfully}
+    environment:
+      CASSANDRA_HOSTS: cassandra1,cassandra2,cassandra3
+      CASSANDRA_DC: dc1
+      DATA_DIR: /data
+      RESULTS_DIR: /results
+    volumes:
+      - ./app:/app
+      - ./data:/data
+      - ./results:/results
+    ports: ["8501:8501"]
+
+volumes:
+  cassandra1-data:
+  cassandra2-data:
+  cassandra3-data:
