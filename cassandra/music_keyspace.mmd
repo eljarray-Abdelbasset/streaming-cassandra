@@ -1,0 +1,232 @@
+erDiagram
+    %% ===== 1. Référentiels =====
+    users {
+        int user_id PK "partition"
+        text username
+        text country
+        int age
+        text subscription "free, premium, family"
+        set_text favorite_genres
+        date signup_date
+        list_text devices
+    }
+
+    users_by_sub_country {
+        text subscription PK "partition"
+        text country PK "partition"
+        int user_id PK "clustering"
+        text username
+    }
+
+    artists {
+        int artist_id PK "partition"
+        text name
+        text country
+        set_text genres
+        list_text members
+        map_text_text social
+    }
+
+    album_info {
+        text title
+        int year
+        text label
+    }
+
+    tracks {
+        int track_id PK "partition"
+        text title
+        int artist_id FK
+        text artist_name
+        frozen_album_info album
+        int duration_sec
+        text genre
+        int bpm
+        boolean explicit
+    }
+
+    tracks_by_artist {
+        int artist_id PK "partition"
+        int album_year PK "clustering DESC"
+        text album_title PK "clustering ASC"
+        int track_id PK "clustering ASC"
+        text title
+        int duration_sec
+        text genre
+    }
+
+    %% ===== 2. Écoutes =====
+    listens_by_user {
+        int user_id PK "partition"
+        timestamp listened_at PK "clustering DESC"
+        timeuuid listen_id PK "clustering DESC"
+        int track_id FK
+        text title
+        int artist_id FK
+        text artist_name
+        text genre
+        int ms_played
+        text device
+        text source "playlist, album, search, radio"
+        boolean skipped
+    }
+
+    %% ===== 3. Compteurs =====
+    track_listen_counts {
+        int track_id PK "partition"
+        counter listens
+    }
+
+    weekly_track_counts {
+        date week_start PK "partition"
+        int track_id PK "clustering"
+        counter listens
+    }
+
+    country_artist_counts {
+        text country PK "partition"
+        int artist_id PK "clustering"
+        counter listens
+    }
+
+    yearly_album_counts {
+        int album_year PK "partition"
+        int artist_id PK "clustering"
+        text album_title PK "clustering"
+        counter listens
+    }
+
+    daily_listen_counts {
+        text month PK "partition"
+        date day PK "clustering"
+        counter listens
+    }
+
+    hourly_listen_counts {
+        text month PK "partition"
+        int hour PK "clustering"
+        counter listens
+    }
+
+    genre_stats {
+        text genre PK "partition"
+        counter plays
+        counter skips
+    }
+
+    device_stats {
+        text device PK "partition"
+        counter plays
+        counter total_ms
+    }
+
+    %% ===== 4. Playlists =====
+    playlists {
+        uuid playlist_id PK "partition"
+        int owner_id FK
+        text name
+        boolean is_public "index SAI"
+        list_int tracks
+        timestamp created_at
+        int version "verrou optimiste LWT"
+        int followers_snapshot "index SAI"
+    }
+
+    playlists_by_user {
+        int owner_id PK "partition"
+        timestamp created_at PK "clustering DESC"
+        uuid playlist_id PK "clustering ASC"
+        text name
+        boolean is_public
+    }
+
+    playlist_followers {
+        uuid playlist_id PK "partition"
+        int user_id PK "clustering"
+        timestamp followed_at
+    }
+
+    playlist_stats {
+        uuid playlist_id PK "partition"
+        counter followers
+    }
+
+    %% ===== 6. Résultats Spark =====
+    meta {
+        text key PK "partition"
+        text value
+    }
+
+    trending_tracks {
+        date week_start PK "partition"
+        int rank PK "clustering"
+        int track_id FK
+        text title
+        text artist_name
+        int listens_week
+        int listens_prev_week
+        int growth
+        double growth_pct
+    }
+
+    recommendations_by_user {
+        int user_id PK "partition"
+        int rank PK "clustering"
+        int track_id FK
+        text title
+        text artist_name
+        double score
+    }
+
+    similar_artists {
+        int artist_id PK "partition"
+        int rank PK "clustering"
+        int similar_artist_id FK
+        text similar_artist_name
+        int common_listeners
+        double jaccard
+    }
+
+    spark_kpis {
+        text job PK "partition"
+        text metric PK "clustering"
+        text dimension PK "clustering"
+        double value
+        timestamp computed_at
+    }
+
+    %% ===== Relations logiques (références) =====
+    users ||--o{ listens_by_user : "écoute"
+    users ||--o{ playlists : "possède"
+    users ||--o{ playlists_by_user : "possède"
+    users ||--o{ playlist_followers : "s'abonne"
+    users ||--o{ users_by_sub_country : "dénormalisé"
+    users ||--o{ recommendations_by_user : "reçoit"
+
+    artists ||--o{ tracks : "interprète"
+    artists ||--o{ tracks_by_artist : "dénormalisé"
+    artists ||--o{ country_artist_counts : "compté"
+    artists ||--o{ yearly_album_counts : "compté"
+    artists ||--o{ similar_artists : "similaire"
+
+    album_info ||--o{ tracks : "embarqué (frozen)"
+
+    tracks ||--o{ listens_by_user : "écouté"
+    tracks ||--|| track_listen_counts : "compté"
+    tracks ||--o{ weekly_track_counts : "compté"
+    tracks ||--o{ trending_tracks : "tendance"
+    tracks ||--o{ recommendations_by_user : "recommandé"
+
+    playlists ||--o{ playlists_by_user : "dénormalisé"
+    playlists ||--o{ playlist_followers : "suivie par"
+    playlists ||--|| playlist_stats : "compteur"
+
+    %% ===== Alimentation par les écoutes et Spark =====
+    listens_by_user ||..o{ genre_stats : "alimente"
+    listens_by_user ||..o{ device_stats : "alimente"
+    listens_by_user ||..o{ daily_listen_counts : "alimente"
+    listens_by_user ||..o{ hourly_listen_counts : "alimente"
+    listens_by_user ||..o{ trending_tracks : "Spark S26"
+    listens_by_user ||..o{ recommendations_by_user : "Spark S27"
+    listens_by_user ||..o{ spark_kpis : "Spark S28-S29"
+    listens_by_user ||..o{ similar_artists : "Spark S30"
