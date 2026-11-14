@@ -320,12 +320,14 @@ class Workload:
         """A17 : un compteur ne peut pas être une colonne de clustering, donc Cassandra ne trie pas
         par nombre d'écoutes : on lit la partition de la semaine et on garde le top k côté client."""
         week = week or self.last_complete_week()
-        top = heapq.nlargest(k, self.s.execute(self.sel_week, (week,)), key=lambda r: r.listens)
+        # list() d'abord : un ResultSet du pilote revient au début de sa page si on le réitère,
+        # ce que fait heapq.nlargest ; sans list(), des lignes seraient comptées deux fois.
+        top = heapq.nlargest(k, list(self.s.execute(self.sel_week, (week,))), key=lambda r: r.listens)
         info = {r.track_id: r for r in self.s.execute(self.sel_tracks_in, ([r.track_id for r in top],))} if top else {}
         return week, [(r.track_id, info[r.track_id].title, info[r.track_id].artist_name, r.listens) for r in top]
 
     def a18_top_artists_by_country(self, country, k=10):
-        top = heapq.nlargest(k, self.s.execute(self.sel_country_artists, (country,)), key=lambda r: r.listens)
+        top = heapq.nlargest(k, list(self.s.execute(self.sel_country_artists, (country,))), key=lambda r: r.listens)
         names = self._names(self.sel_artists_in, [r.artist_id for r in top], "name")
         return [(r.artist_id, names.get(r.artist_id), r.listens) for r in top]
 
@@ -362,7 +364,7 @@ class Workload:
         return sorted(rows, key=lambda r: r.followers_snapshot, reverse=True)
 
     def a25_albums_of_year(self, year, k=20):
-        top = heapq.nlargest(k, self.s.execute(self.sel_year_albums, (year,)), key=lambda r: r.listens)
+        top = heapq.nlargest(k, list(self.s.execute(self.sel_year_albums, (year,))), key=lambda r: r.listens)
         names = self._names(self.sel_artists_in, {r.artist_id for r in top}, "name")
         return [(r.album_title, names.get(r.artist_id), r.listens) for r in top]
 

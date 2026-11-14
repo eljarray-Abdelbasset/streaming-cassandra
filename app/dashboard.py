@@ -17,6 +17,41 @@ from queries import Workload
 st.set_page_config(page_title="Streaming musical : Cassandra et Spark", page_icon="🎧", layout="wide")
 SESSION_BUCKETS = ["0-5 min", "5-15 min", "15-30 min", "30-60 min", "1-2 h", "plus de 2 h"]
 
+# Passez à True pour réafficher les identifiants du sujet (A17, T4, S26…) dans les titres et les graphiques.
+AFFICHER_IDS = False
+
+# Nom court de chaque requête, affiché à la place de son identifiant dans les graphiques de performance
+NOMS = {
+    "T1": "Enregistrer une écoute", "T2": "Importer 10 000 écoutes", "T3": "Profil d'un utilisateur",
+    "T4": "50 dernières écoutes", "T5": "Fiche d'un titre", "T6": "Créer une playlist",
+    "T7": "Insérer dans une playlist", "T8": "Retirer d'une playlist", "T9": "S'abonner à une playlist",
+    "T10": "Changer d'abonnement", "T11": "Ajouter un genre préféré", "T12": "Playlists d'un utilisateur",
+    "T13": "Effacer l'historique", "T14": "Titres d'un artiste", "T15": "Total d'écoutes d'un titre",
+    "A16": "Écoutes par jour", "A17": "Top 10 de la semaine", "A18": "Top 10 des artistes par pays",
+    "A19": "Taux de saut par genre", "A20": "Durée moyenne par appareil",
+    "A21": "Utilisateurs par abonnement et pays", "A22": "Écoutes par heure", "A23": "Titres jamais écoutés",
+    "A24": "Playlists publiques populaires", "A25": "Albums d'une année",
+    "S26": "Tendances de la semaine", "S27": "Recommandations ALS", "S28": "Sessions d'écoute",
+    "S29": "Gratuit, premium et famille", "S30": "Artistes similaires",
+}
+OPERATIONS = {"T1 écriture": "Écriture d'une écoute", "T3 lecture": "Lecture d'un profil",
+              "T4 lecture": "Lecture de l'historique"}
+
+
+def titre(texte, qid):
+    """Titre d'un bloc ; l'identifiant de la requête n'apparaît que si AFFICHER_IDS vaut True."""
+    return f"{texte} ({qid})" if AFFICHER_IDS else texte
+
+
+def nom(qid):
+    """Nom d'une requête dans un graphique, suivi de son identifiant si AFFICHER_IDS vaut True."""
+    return titre(NOMS.get(qid, qid), qid)
+
+
+def operation(texte):
+    """Libellé d'une opération de l'expérience de cohérence, par exemple « Écriture d'une écoute »."""
+    return texte if AFFICHER_IDS else OPERATIONS.get(texte, texte)
+
 
 @st.cache_resource
 def get_workload():
@@ -130,15 +165,15 @@ with tabs[0]:
     cols[3].metric("Titres sautés", f"{skips['Sautées'].sum() / total:.1%}" if total else "-")
     left, right = st.columns(2)
     with left:
-        st.subheader("Écoutes par jour sur 30 jours (A16)")
+        st.subheader(titre("Écoutes par jour sur 30 jours", "A16"))
         st.plotly_chart(px.line(daily(), x="Jour", y="Écoutes", markers=True))
     with right:
-        st.subheader("Écoutes par heure de la journée (A22)")
+        st.subheader(titre("Écoutes par heure de la journée", "A22"))
         st.plotly_chart(px.bar(hourly(), x="Heure (UTC)", y="Écoutes"))
 
 with tabs[1]:
     week, top = top_week()
-    st.subheader(f"Top 10 des titres, semaine du {week} (A17)")
+    st.subheader(titre(f"Top 10 des titres, semaine du {week}", "A17"))
     if top.empty:
         st.info("Aucune écoute pendant cette semaine.")
     else:
@@ -148,13 +183,13 @@ with tabs[1]:
     with left:
         countries = sorted(subs_countries()["Pays"].unique())
         country = st.selectbox("Pays des auditeurs", countries, index=countries.index("MA") if "MA" in countries else 0)
-        st.subheader(f"Top 10 des artistes écoutés depuis {country} (A18)")
+        st.subheader(titre(f"Top 10 des artistes écoutés depuis {country}", "A18"))
         st.plotly_chart(px.bar(top_artists(country).sort_values("Écoutes"), x="Écoutes", y="Artiste",
                                orientation="h"))
     with right:
         end_year = int(info.get("dataset_end", "2026")[:4])
         year = st.selectbox("Année de sortie des albums", list(range(end_year, 1984, -1)))
-        st.subheader(f"Albums sortis en {year}, par nombre d'écoutes (A25)")
+        st.subheader(titre(f"Albums sortis en {year}, par nombre d'écoutes", "A25"))
         df = albums(year)
         if df.empty:
             st.info("Aucun album de cette année n'a été écouté.")
@@ -164,23 +199,23 @@ with tabs[1]:
 with tabs[2]:
     left, right = st.columns(2)
     with left:
-        st.subheader("Taux de titres sautés par genre (A19)")
+        st.subheader(titre("Taux de titres sautés par genre", "A19"))
         st.plotly_chart(px.bar(skip_rates(), x="Genre", y="Taux", hover_data=["Écoutes"]).update_yaxes(tickformat=".0%"))
     with right:
-        st.subheader("Durée moyenne d'écoute par appareil (A20)")
+        st.subheader(titre("Durée moyenne d'écoute par appareil", "A20"))
         st.plotly_chart(px.bar(devices(), x="Appareil", y="Durée moyenne (s)", hover_data=["Écoutes"]))
-    st.subheader("Utilisateurs par abonnement et par pays (A21, GROUP BY natif)")
+    st.subheader(titre("Utilisateurs par abonnement et par pays", "A21"))
     pivot = subs_countries().pivot_table(index="Abonnement", columns="Pays", values="Utilisateurs", fill_value=0)
     st.plotly_chart(px.imshow(pivot, text_auto=True, aspect="auto", color_continuous_scale="Purples"))
     left, right = st.columns(2)
     with left:
         n, sample = never_listened()
-        st.subheader("Titres jamais écoutés (A23)")
+        st.subheader(titre("Titres jamais écoutés", "A23"))
         st.metric("Titres sans aucune écoute", fmt(n))
         st.caption("Premiers identifiants : " + ", ".join(map(str, sample[:10])))
     with right:
         df = popular_playlists()
-        st.subheader("Playlists publiques de plus de 100 abonnés (A24)")
+        st.subheader(titre("Playlists publiques de plus de 100 abonnés", "A24"))
         st.caption(f"{len(df)} playlists, trouvées par l'intersection de deux index SAI.")
         st.dataframe(df.head(50), hide_index=True, height=260)
 
@@ -199,7 +234,7 @@ with tabs[3]:
                  f"Appareils : {', '.join(user.devices or [])}.")
         left, right = st.columns([3, 2])
         with left:
-            st.subheader("50 dernières écoutes (T4)")
+            st.subheader(titre("50 dernières écoutes", "T4"))
             hist = pd.DataFrame([(r.listened_at, r.title, r.artist_name, r.device, r.source, r.skipped,
                                   round(r.ms_played / 1000)) for r in wl.t4_last_listens(uid)],
                                 columns=["Date (UTC)", "Titre", "Artiste", "Appareil", "Source", "Sauté", "Écouté (s)"])
@@ -208,14 +243,14 @@ with tabs[3]:
             else:
                 st.dataframe(hist, hide_index=True, height=380)
         with right:
-            st.subheader("Recommandations ALS (S27)")
+            st.subheader(titre("Recommandations ALS", "S27"))
             recs = cql("SELECT rank, title, artist_name, score FROM recommendations_by_user WHERE user_id = %s", (uid,))
             if recs.empty:
                 st.info("Lancez « spark-submit s27_als.py » pour calculer les recommandations.")
             else:
                 st.dataframe(recs.rename(columns={"rank": "Rang", "title": "Titre", "artist_name": "Artiste",
                                                   "score": "Score"}), hide_index=True)
-            st.subheader("Playlists (T12)")
+            st.subheader(titre("Playlists", "T12"))
             pls = pd.DataFrame([(r.name, "publique" if r.is_public else "privée", r.created_at.date())
                                 for r in wl.t12_user_playlists(uid)], columns=["Nom", "Visibilité", "Créée le"])
             if pls.empty:
@@ -224,7 +259,7 @@ with tabs[3]:
                 st.dataframe(pls, hide_index=True)
 
 with tabs[4]:
-    st.subheader("Titres en plus forte progression d'une semaine à l'autre (S26, fonction lag)")
+    st.subheader(titre("Titres en plus forte progression d'une semaine à l'autre", "S26"))
     weeks = cql("SELECT DISTINCT week_start FROM trending_tracks")
     if weeks.empty:
         st.info("Lancez « spark-submit s26_trends.py » pour calculer les tendances.")
@@ -241,7 +276,7 @@ with tabs[4]:
 
     left, right = st.columns(2)
     with left:
-        st.subheader("Durée des sessions d'écoute (S28)")
+        st.subheader(titre("Durée des sessions d'écoute", "S28"))
         s28 = kpis("S28")
         if s28.empty:
             st.info("Lancez « spark-submit s28_sessions.py » pour reconstituer les sessions.")
@@ -255,7 +290,7 @@ with tabs[4]:
             st.plotly_chart(px.bar(hist.sort_values("dimension"), x="dimension", y="value",
                                    labels={"dimension": "Durée de la session", "value": "Sessions"}))
     with right:
-        st.subheader("Gratuit, premium et famille (S29)")
+        st.subheader(titre("Gratuit, premium et famille", "S29"))
         s29 = kpis("S29")
         if s29.empty:
             st.info("Lancez « spark-submit s29_free_vs_premium.py » pour comparer les abonnements.")
@@ -272,7 +307,7 @@ with tabs[4]:
 
     left, right = st.columns(2)
     with left:
-        st.subheader("Artistes similaires (S30, auditeurs communs)")
+        st.subheader(titre("Artistes similaires, d'après les auditeurs communs", "S30"))
         ranking = top_artists("MA")
         default_artist = int(ranking["artist_id"].iloc[0]) if not ranking.empty else 1
         aid = int(st.number_input("Identifiant de l'artiste", min_value=1, max_value=100_000, value=default_artist))
@@ -287,7 +322,7 @@ with tabs[4]:
                                    orientation="h", hover_data=["common_listeners"],
                                    labels={"jaccard": "Indice de Jaccard", "similar_artist_name": ""}))
     with right:
-        st.subheader("ALS face à la popularité (S27, top 10)")
+        st.subheader(titre("ALS face à la popularité, sur un top 10", "S27"))
         s27 = kpis("S27")
         ev = s27[s27["metric"].str.endswith("@10")] if not s27.empty else s27
         if ev.empty:
@@ -303,9 +338,14 @@ with tabs[5]:
     if native.empty:
         st.info("Lancez « python bench_workload.py » pour mesurer les requêtes natives.")
     else:
-        st.plotly_chart(px.bar(native, x="query", y="p50_ms", color="category", log_y=True,
-                               hover_data=["label", "p95_ms", "runs"],
-                               labels={"query": "", "p50_ms": "Médiane (ms, échelle log)", "category": "Type"}))
+        plot = native.assign(Requête=native["query"].map(nom),
+                             Type=native["category"].map({"T": "Transactionnelle", "A": "Analytique"}))
+        fig = px.bar(plot, x="p50_ms", y="Requête", color="Type", orientation="h", log_x=True, height=720,
+                     hover_data=["p95_ms", "runs"],
+                     labels={"p50_ms": "Médiane (ms, échelle log)", "Requête": "", "p95_ms": "p95 (ms)",
+                             "runs": "Exécutions"})
+        fig.update_yaxes(categoryorder="array", categoryarray=list(plot["Requête"])[::-1])
+        st.plotly_chart(fig)
     left, right = st.columns(2)
     with left:
         st.subheader("Même requête : Cassandra native ou Spark")
@@ -318,9 +358,10 @@ with tabs[5]:
             vs["ms"], vs["Exécution"] = vs["seconds"] * 1000, "Spark, " + vs["mode"]
             nat = native[native["query"].isin(vs["query"])][["query", "p50_ms"]].rename(columns={"p50_ms": "ms"})
             nat["Exécution"] = "Cassandra native"
-            st.plotly_chart(px.bar(pd.concat([nat, vs[["query", "ms", "Exécution"]]]), x="query", y="ms",
-                                   color="Exécution", barmode="group", log_y=True,
-                                   labels={"query": "", "ms": "Temps (ms, échelle log)"}))
+            comp = pd.concat([nat, vs[["query", "ms", "Exécution"]]])
+            comp["Requête"] = comp["query"].map(nom)
+            st.plotly_chart(px.bar(comp, x="Requête", y="ms", color="Exécution", barmode="group", log_y=True,
+                                   labels={"Requête": "", "ms": "Temps (ms, échelle log)"}))
     with right:
         st.subheader("Durée totale des traitements Spark")
         jobs = spark[spark["step"] == "total"].groupby("job", as_index=False)["seconds"].last() \
@@ -328,23 +369,31 @@ with tabs[5]:
         if jobs.empty:
             st.info("Lancez les traitements Spark (s26 à s30) pour les chronométrer.")
         else:
-            st.plotly_chart(px.bar(jobs, x="job", y="seconds", labels={"job": "", "seconds": "Durée (s)"}))
+            jobs = jobs.assign(Traitement=jobs["job"].map(nom))
+            st.plotly_chart(px.bar(jobs, x="Traitement", y="seconds", labels={"Traitement": "", "seconds": "Durée (s)"}))
     st.subheader("Niveau de cohérence : latence médiane et échecs")
     files = sorted(glob.glob(os.path.join(RESULTS_DIR, "consistency_*.csv")))
     if not files:
         st.info("Lancez « python bench_consistency.py --label 3_noeuds », puis la même commande avec un nœud arrêté.")
     else:
         cons = pd.concat([pd.read_csv(f) for f in files])
-        st.plotly_chart(px.bar(cons, x="level", y="p50_ms", color="label", barmode="group", facet_col="operation",
-                               category_orders={"level": ["ONE", "QUORUM", "ALL"]},
-                               labels={"level": "", "p50_ms": "Médiane (ms)", "label": "Cluster"}))
+        cons["Opération"] = cons["operation"].map(operation)
+        cons["Cluster"] = cons["label"].astype(str).str.replace("_", " ")
+        fig = px.bar(cons, x="level", y="p50_ms", color="Cluster", barmode="group", facet_col="Opération",
+                     category_orders={"level": ["ONE", "QUORUM", "ALL"]},
+                     labels={"level": "", "p50_ms": "Médiane (ms)"})
+        fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+        st.plotly_chart(fig)
         failed = cons[cons["errors"] > 0]
         if not failed.empty:
-            st.dataframe(failed[["label", "level", "operation", "ok", "errors", "error_types"]], hide_index=True)
-    st.subheader("Effet de l'indexation (T14 et A24)")
+            st.dataframe(failed[["Cluster", "level", "Opération", "ok", "errors", "error_types"]].rename(
+                columns={"level": "Niveau", "ok": "Réussites", "errors": "Échecs", "error_types": "Erreurs"}),
+                hide_index=True)
+    st.subheader("Effet de l'indexation")
     idx = read_csv("indexing.csv")
     if idx.empty:
         st.info("Lancez « python bench_indexing.py » (hors démonstration : il supprime puis recrée les index).")
     else:
-        st.plotly_chart(px.bar(idx, x="p50_ms", y="variant", color="query", orientation="h", log_x=True,
-                               labels={"p50_ms": "Médiane (ms, échelle log)", "variant": ""}))
+        idx = idx.assign(Requête=idx["query"].map(nom))
+        st.plotly_chart(px.bar(idx, x="p50_ms", y="variant", color="Requête", orientation="h", log_x=True,
+                               barmode="group", labels={"p50_ms": "Médiane (ms, échelle log)", "variant": ""}))
